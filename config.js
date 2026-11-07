@@ -5,7 +5,7 @@ module.exports = {
   ADMIN_IDS: (process.env.ADMIN_IDS || "8824756103").split(",").map(Number).filter(Boolean),
 
   // --- TAMBAHAN TOKEN GITHUB LO DI SINI ---
-  GITHUB_TOKEN: "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",
+  GITHUB_TOKEN: "",
 
   // --- 2 CHANNEL WAJIB JOIN ---
   CHANNEL_USERNAME: process.env.CHANNEL_USERNAME || "@infobuilderzxv",
