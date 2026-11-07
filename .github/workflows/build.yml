@@ -1,0 +1,108 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag Release'
+        required: true
+      mode:
+        description: 'Mode Build (debug / release)'
+        required: true
+        default: 'release'
+      chat_id:
+        description: 'ID Telegram User'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 🔥 FIX 1: Download file ZIP apapun namanya dari Release
+      - name: Download & Rename ZIP
+        run: |
+          # Ambil info release berdasarkan tag
+          RELEASE_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}")
+          
+          # Cari URL download file yang berekstensi .zip
+          ASSET_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -n 1)
+          
+          if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" == "null" ]; then
+            echo "❌ Tidak ada file .zip di Release ini!"
+            exit 1
+          fi
+          
+          echo "Downloading dari: $ASSET_URL"
+          # Download dan PAKSA namanya jadi project.zip
+          curl -L -f -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o project.zip "$ASSET_URL"
+          
+          echo "✅ File ZIP berhasil disiapkan sebagai project.zip"
+
+      # 🔥 FIX 2: Unzip pinter (nyari pubspec.yaml di dalam folder)
+      - name: Unzip Project
+        run: |
+          mkdir -p project
+          unzip -q project.zip -d project
+          
+          # Cek apakah pubspec.yaml ada di root
+          if [ ! -f "project/pubspec.yaml" ]; then
+            echo "⚠️ pubspec.yaml tidak ada di root, mencari di dalam folder..."
+            PUBSPEC_PATH=$(find project -name "pubspec.yaml" -type f | head -n 1)
+            if [ -z "$PUBSPEC_PATH" ]; then
+              echo "❌ File pubspec.yaml tidak ditemukan di dalam ZIP!"
+              echo "Isi ZIP lo cuma ini:"
+              ls -R project
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
+            echo "✅ pubspec.yaml ditemukan di: $PROJECT_DIR"
+            # Pindahin isi foldernya ke root project
+            mv $PROJECT_DIR/* project/ 2>/dev/null || true
+            mv $PROJECT_DIR/.* project/ 2>/dev/null || true
+          fi
+          echo "✅ Project berhasil diekstrak."
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      - name: Build APK
+        run: |
+          cd project
+          flutter pub get
+          if [ "${{ github.event.inputs.mode }}" == "release" ]; then
+            flutter build apk --release
+          else
+            flutter build apk --debug
+          fi
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk
+          path: project/build/app/outputs/flutter-apk/*.apk
+
+      - name: Send APK to Telegram
+        run: |
+          APK_PATH=$(find project -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK tidak ditemukan!"
+            exit 1
+          fi
+          curl -F "chat_id=${{ github.event.inputs.chat_id }}" \
+               -F "document=@$APK_PATH" \
+               -F "caption=✅ Build Sukses! Ini APK lo." \
+               "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument"
