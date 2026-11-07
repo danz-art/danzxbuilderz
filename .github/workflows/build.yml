@@ -22,56 +22,63 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 1. Download ZIP (Cari file .zip apapun di Release)
-      - name: Download Project ZIP
+      # 🔥 FIX 1: Download file ZIP apapun namanya dari Release
+      - name: Download & Rename ZIP
         run: |
-          # Ambil ID Release dari tag
-          RELEASE_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}" | jq -r '.id')
+          # Ambil info release berdasarkan tag
+          RELEASE_JSON=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}")
           
-          # Ambil URL download asset pertama yang berakhiran .zip
-          ASSET_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" | jq -r '.[0].browser_download_url')
+          # Cari URL download file yang berekstensi .zip
+          ASSET_URL=$(echo "$RELEASE_JSON" | jq -r '.assets[] | select(.name | endswith(".zip")) | .browser_download_url' | head -n 1)
+          
+          if [ -z "$ASSET_URL" ] || [ "$ASSET_URL" == "null" ]; then
+            echo "❌ Tidak ada file .zip di Release ini!"
+            exit 1
+          fi
           
           echo "Downloading dari: $ASSET_URL"
+          # Download dan PAKSA namanya jadi project.zip
           curl -L -f -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o project.zip "$ASSET_URL"
           
-          echo "✅ File ZIP berhasil didownload."
+          echo "✅ File ZIP berhasil disiapkan sebagai project.zip"
 
-      # 2. Ekstrak ZIP
+      # 🔥 FIX 2: Unzip pinter (nyari pubspec.yaml di dalam folder)
       - name: Unzip Project
         run: |
           mkdir -p project
           unzip -q project.zip -d project
           
+          # Cek apakah pubspec.yaml ada di root
           if [ ! -f "project/pubspec.yaml" ]; then
+            echo "⚠️ pubspec.yaml tidak ada di root, mencari di dalam folder..."
             PUBSPEC_PATH=$(find project -name "pubspec.yaml" -type f | head -n 1)
             if [ -z "$PUBSPEC_PATH" ]; then
               echo "❌ File pubspec.yaml tidak ditemukan di dalam ZIP!"
+              echo "Isi ZIP lo cuma ini:"
+              ls -R project
               exit 1
             fi
             PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
             echo "✅ pubspec.yaml ditemukan di: $PROJECT_DIR"
+            # Pindahin isi foldernya ke root project
             mv $PROJECT_DIR/* project/ 2>/dev/null || true
             mv $PROJECT_DIR/.* project/ 2>/dev/null || true
           fi
           echo "✅ Project berhasil diekstrak."
 
-      # 3. Setup Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # 4. Setup Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      # 5. Build APK
       - name: Build APK
         run: |
           cd project
@@ -82,14 +89,12 @@ jobs:
             flutter build apk --debug
           fi
 
-      # 6. Upload APK jadi Artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: flutter-apk
           path: project/build/app/outputs/flutter-apk/*.apk
 
-      # 7. Kirim APK ke Telegram
       - name: Send APK to Telegram
         run: |
           APK_PATH=$(find project -name "*.apk" | head -n 1)
