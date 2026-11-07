@@ -1,0 +1,103 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag Release'
+        required: true
+      mode:
+        description: 'Mode Build (debug / release)'
+        required: true
+        default: 'release'
+      chat_id:
+        description: 'ID Telegram User'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 1. Download ZIP (Cari file .zip apapun di Release)
+      - name: Download Project ZIP
+        run: |
+          # Ambil ID Release dari tag
+          RELEASE_ID=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ github.event.inputs.tag }}" | jq -r '.id')
+          
+          # Ambil URL download asset pertama yang berakhiran .zip
+          ASSET_URL=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/${RELEASE_ID}/assets" | jq -r '.[0].browser_download_url')
+          
+          echo "Downloading dari: $ASSET_URL"
+          curl -L -f -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o project.zip "$ASSET_URL"
+          
+          echo "✅ File ZIP berhasil didownload."
+
+      # 2. Ekstrak ZIP
+      - name: Unzip Project
+        run: |
+          mkdir -p project
+          unzip -q project.zip -d project
+          
+          if [ ! -f "project/pubspec.yaml" ]; then
+            PUBSPEC_PATH=$(find project -name "pubspec.yaml" -type f | head -n 1)
+            if [ -z "$PUBSPEC_PATH" ]; then
+              echo "❌ File pubspec.yaml tidak ditemukan di dalam ZIP!"
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
+            echo "✅ pubspec.yaml ditemukan di: $PROJECT_DIR"
+            mv $PROJECT_DIR/* project/ 2>/dev/null || true
+            mv $PROJECT_DIR/.* project/ 2>/dev/null || true
+          fi
+          echo "✅ Project berhasil diekstrak."
+
+      # 3. Setup Java
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      # 4. Setup Flutter
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      # 5. Build APK
+      - name: Build APK
+        run: |
+          cd project
+          flutter pub get
+          if [ "${{ github.event.inputs.mode }}" == "release" ]; then
+            flutter build apk --release
+          else
+            flutter build apk --debug
+          fi
+
+      # 6. Upload APK jadi Artifact
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk
+          path: project/build/app/outputs/flutter-apk/*.apk
+
+      # 7. Kirim APK ke Telegram
+      - name: Send APK to Telegram
+        run: |
+          APK_PATH=$(find project -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK tidak ditemukan!"
+            exit 1
+          fi
+          curl -F "chat_id=${{ github.event.inputs.chat_id }}" \
+               -F "document=@$APK_PATH" \
+               -F "caption=✅ Build Sukses! Ini APK lo." \
+               "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument"
