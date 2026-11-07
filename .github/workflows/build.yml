@@ -1,0 +1,80 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag Release'
+        required: true
+      mode:
+        description: 'Mode Build (debug / release)'
+        required: true
+        default: 'release'
+      chat_id:
+        description: 'ID Telegram User'
+        required: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Ambil kode dari repo
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Download file ZIP yang di-upload bot
+      - name: Download Project ZIP
+        run: |
+          curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -o project.zip \
+          "https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag }}/project.zip"
+
+      # 3. Ekstrak ZIP
+      - name: Unzip Project
+        run: unzip project.zip -d project
+
+      # 4. Setup Java (Wajib buat Flutter)
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      # 5. Setup Flutter SDK
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      # 6. Build APK
+      - name: Build APK
+        run: |
+          cd project
+          flutter pub get
+          if [ "${{ github.event.inputs.mode }}" == "release" ]; then
+            flutter build apk --release
+          else
+            flutter build apk --debug
+          fi
+
+      # 7. Upload APK jadi Artifact
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk
+          path: project/build/app/outputs/flutter-apk/*.apk
+
+      # 8. Kirim APK ke Telegram (Wajib pake Secret TELEGRAM_BOT_TOKEN)
+      - name: Send APK to Telegram
+        run: |
+          APK_PATH=$(find project -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "APK tidak ditemukan!"
+            exit 1
+          fi
+          curl -F "chat_id=${{ github.event.inputs.chat_id }}" \
+               -F "document=@$APK_PATH" \
+               -F "caption=✅ Build Sukses! Ini APK lo." \
+               "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendDocument"
