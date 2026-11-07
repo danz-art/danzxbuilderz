@@ -19,36 +19,60 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. Ambil kode dari repo
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. Download file ZIP yang di-upload bot
+      # 1. Download ZIP dari Release
       - name: Download Project ZIP
         run: |
-          curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          echo "Mencoba download ZIP dari tag: ${{ github.event.inputs.tag }}"
+          curl -L -f -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
           -o project.zip \
           "https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag }}/project.zip"
+          
+          if [ ! -f project.zip ]; then
+            echo "❌ File project.zip tidak ditemukan di Release!"
+            exit 1
+          fi
+          echo "✅ File ZIP berhasil didownload."
 
-      # 3. Ekstrak ZIP
+      # 2. Ekstrak ZIP
       - name: Unzip Project
-        run: unzip project.zip -d project
+        run: |
+          mkdir -p project
+          unzip -q project.zip -d project
+          
+          # Cek apakah pubspec.yaml ada di root
+          if [ ! -f "project/pubspec.yaml" ]; then
+            echo "⚠️ pubspec.yaml tidak ada di root, mencari di dalam folder..."
+            PUBSPEC_PATH=$(find project -name "pubspec.yaml" -type f | head -n 1)
+            if [ -z "$PUBSPEC_PATH" ]; then
+              echo "❌ File pubspec.yaml tidak ditemukan di dalam ZIP!"
+              exit 1
+            fi
+            PROJECT_DIR=$(dirname "$PUBSPEC_PATH")
+            echo "✅ pubspec.yaml ditemukan di: $PROJECT_DIR"
+            # Pindahin isi folder project ke root project
+            mv $PROJECT_DIR/* project/ 2>/dev/null || true
+            mv $PROJECT_DIR/.* project/ 2>/dev/null || true
+          fi
+          echo "✅ Project berhasil diekstrak."
 
-      # 4. Setup Java (Wajib buat Flutter)
+      # 3. Setup Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      # 5. Setup Flutter SDK
+      # 4. Setup Flutter
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: '3.19.0'
           channel: 'stable'
 
-      # 6. Build APK
+      # 5. Build APK
       - name: Build APK
         run: |
           cd project
@@ -59,14 +83,14 @@ jobs:
             flutter build apk --debug
           fi
 
-      # 7. Upload APK jadi Artifact
+      # 6. Upload APK jadi Artifact
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: flutter-apk
           path: project/build/app/outputs/flutter-apk/*.apk
 
-      # 8. Kirim APK ke Telegram (Wajib pake Secret TELEGRAM_BOT_TOKEN)
+      # 7. Kirim APK ke Telegram
       - name: Send APK to Telegram
         run: |
           APK_PATH=$(find project -name "*.apk" | head -n 1)
