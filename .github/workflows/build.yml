@@ -1,0 +1,64 @@
+name: Build Flutter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag Release (contoh: build-123)'
+        required: true
+      mode:
+        description: 'Mode Build (debug / release)'
+        required: true
+        default: 'release'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Ambil kode dari repo
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Download file ZIP yang lo upload ke Release
+      - name: Download Project ZIP
+        run: |
+          curl -L -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -o project.zip \
+          "https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag }}/project.zip"
+
+      # 3. Ekstrak ZIP
+      - name: Unzip Project
+        run: unzip project.zip -d project
+
+      # 4. Setup Java (Wajib buat Flutter)
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+
+      # 5. Setup Flutter SDK
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.19.0'
+          channel: 'stable'
+
+      # 6. Build APK
+      - name: Build APK
+        run: |
+          cd project
+          flutter pub get
+          if [ "${{ github.event.inputs.mode }}" == "release" ]; then
+            flutter build apk --release
+          else
+            flutter build apk --debug
+          fi
+
+      # 7. Upload APK jadi Artifact
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flutter-apk
+          path: project/build/app/outputs/flutter-apk/*.apk
